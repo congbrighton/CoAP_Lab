@@ -1,47 +1,50 @@
 import asyncio
 import json
-import random
-import aiocoap
-import aiocoap.resource as resource
-
-class SensorDataResource(resource.Resource):
-    def __init__(self):
-        super().__init__()
-        self.data = {
-            "device_id": "sensor01",
-            "temperature": 28.5,
-            "humidity": 65.2
-        }
-
-    async def render_get(self, request):
-        payload = json.dumps(self.data).encode('utf-8')
-        # Format 50 đại diện cho application/json trong CoAP
-        return aiocoap.Message(payload=payload, content_format=50)
-
-    def update_sensor_data(self):
-        self.data["temperature"] = round(random.uniform(25.0, 40.0), 1)
-        self.data["humidity"] = round(random.uniform(30.0, 80.0), 1)
-        print(f"[Update] New Sensor Data: Temp={self.data['temperature']}°C, Hum={self.data['humidity']}%")
-
-async def sensor_updater(sensor_resource):
-    while True:
-        await asyncio.sleep(3)
-        sensor_resource.update_sensor_data()
+import datetime
+from aiocoap import Context, Message, GET
 
 async def main():
-    root = resource.Site()
-    sensor_res = SensorDataResource()
-    root.add_resource(['iot', 'lab', 'sensor01', 'data'], sensor_res)
+    protocol = await Context.create_client_context()
+    uri = 'coap://localhost:5683/iot/lab/sensor01/data'
 
-    await aiocoap.Context.create_server_bound(root, bind=('127.0.0.1', 5683))
-    print("Sensor CoAP Server started on port 5683...")
+    print("Monitoring CoAP Client started. Press Ctrl+C to stop.\n")
 
-    # Chạy vòng lặp cập nhật cảm biến liên tục mỗi 3 giây
-    asyncio.create_task(sensor_updater(sensor_res))
-    await asyncio.get_running_loop().create_future()
+    while True:
+        try:
+            req = Message(code=GET, uri=uri)
+            res = await protocol.request(req).response
+            now = datetime.datetime.now().strftime("%H:%M:%S")
+
+            data = json.loads(res.payload.decode('utf-8'))
+            temp = data.get("temperature", 0)
+            hum = data.get("humidity", 0)
+            dev_id = data.get("device_id", "unknown")
+
+            print(f"[{now}] Received sensor data")
+            print(f"Device: {dev_id}")
+            print(f"Temperature: {temp} C")
+            print(f"Humidity: {hum} %")
+
+            has_warning = False
+            if temp > 35.0:
+                print("CANH BAO: Nhiet do cao")
+                has_warning = True
+            if hum < 40.0:
+                print("CANH BAO: Do am thap")
+                has_warning = True
+
+            if not has_warning:
+                print("Trang thai: Binh thuong")
+
+            print("-" * 30)
+
+        except Exception as e:
+            print(f"Lỗi truy vấn Server: {e}")
+
+        await asyncio.sleep(3)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nSensor Server stopped.")
+        print("\nMonitoring stopped.")
